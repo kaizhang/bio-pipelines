@@ -1,0 +1,13 @@
+flags:
+    SciFlow:
+        sge: True
+
+packages:
+    - '.'
+    - ../bio-experiments
+    - ../SciFlow
+
+extra-deps:
+    - drmaa-0.1.0.1
+
+resolver: lts-6.1
