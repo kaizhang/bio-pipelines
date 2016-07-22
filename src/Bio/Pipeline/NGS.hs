@@ -147,3 +147,19 @@ removeDuplicates picardPath dir' = mapM $ \e -> do
     return $ files .~ concat newFiles $ e
   where
     dir = fromText $ T.pack dir'
+
+bamToBed :: FilePath -> [Experiment] -> IO [Experiment]
+bamToBed dir' = mapM $ \e -> do
+    mktree dir
+    let fls = filter (\x -> x^.format == BamFile) $ e^.files
+    newFiles <- forM fls $ \fl -> do
+        let output = T.format (fp%"/"%s%"bed.gz") dir $ fst $ T.breakOnEnd "." $
+                snd $ T.breakOnEnd "/" $ T.pack $ fl^.location
+            bedFile = format .~ BedGZip $
+                      location .~ T.unpack output $ fl
+        shells (T.format ("bedtools bamtobed -i "%s%" | gzip -c > "%s)
+            (T.pack $ fl^.location) output) empty
+        return bedFile
+    return $ files .~ newFiles $ e
+  where
+    dir = fromText $ T.pack dir'
