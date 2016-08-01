@@ -17,12 +17,22 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:
-    Bio.Pipeline.NGS
     Bio.Pipeline.CallPeaks
+    Bio.Pipeline.NGS
+    Bio.Pipeline.Utils
+    Bio.Pipeline.ScanMotifs
+    Bio.Pipeline.Instances
 
   build-depends:
       base >=4.0 && <5.0
+    , aeson
+    , bytestring
     , bio-experiments
+    , bioinformatics-toolkit
+    , conduit-combinators
+    , cereal
+    , data-default
+    , hashable
     , lens
     , mtl
     , turtle

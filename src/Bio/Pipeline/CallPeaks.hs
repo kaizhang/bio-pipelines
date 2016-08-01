@@ -15,6 +15,8 @@ import qualified Data.Text                 as T
 import           Turtle                    hiding (FilePath, format)
 import qualified Turtle                    as T
 
+import Bio.Pipeline.Utils
+
 type CallPeakOptSetter = State CallPeakOpts ()
 
 data CallPeakOpts = CallPeakOpts
@@ -39,13 +41,14 @@ defaultCallPeakOpts = CallPeakOpts
 -- | Input: A list of target-input duos. The first BED file in Experiment will be
 -- analyzed.
 callPeaks :: FilePath
-          -> [(Experiment, Maybe Experiment)]
           -> CallPeakOptSetter
+          -> [(Experiment, Maybe Experiment)]
           -> IO [Experiment]
-callPeaks dir datasets setter = forM datasets $ \(target, input) -> do
+callPeaks dir setter datasets = forM datasets $ \(target, input) -> do
     let targetFile = getFile target
         inputFile = fmap getFile input
-        output = dir ++ "/" ++ T.unpack (snd $ T.breakOnEnd "/" $ T.pack $ targetFile^.location)
+        output = T.unpack $ T.format (s%"/"%s%"_rep"%d%".NarrowPeak") (T.pack dir)
+            (target^.eid) (targetFile^.replication)
         peakFile = format .~ NarrowPeakFile $
             location .~ output $
             keywords .~ ["macs2"] $ targetFile
