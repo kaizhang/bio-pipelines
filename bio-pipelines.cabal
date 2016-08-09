@@ -27,6 +27,7 @@ library
       base >=4.0 && <5.0
     , aeson
     , bytestring
+    , binary
     , bio-experiments
     , bioinformatics-toolkit
     , conduit-combinators

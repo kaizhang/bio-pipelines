@@ -14,6 +14,7 @@ import qualified Data.ByteString.Char8 as B
 import           Data.Hashable
 import           Data.Maybe
 import           Data.Serialize        (Serialize)
+import           Data.Binary (Binary)
 import qualified Data.Text             as T
 import           GHC.Generics          (Generic)
 
@@ -30,3 +31,4 @@ $(deriveJSON defaultOptions ''NarrowPeak)
 
 deriving instance Generic BED
 instance Serialize BED
+instance Binary BED
