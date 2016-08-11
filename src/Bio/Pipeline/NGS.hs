@@ -31,12 +31,14 @@ defaultBWAOpts = BWAOpts
 
 type BWAOptSetter = State BWAOpts ()
 
+
 -- | Tag alignment with BWA aligner.
-bwaAlign :: FilePath  -- ^ directory to save the results
+bwaAlign :: IsDNASeq a
+         => FilePath  -- ^ directory to save the results
          -> FilePath  -- ^ genome index
          -> BWAOptSetter
-         -> [Experiment]
-         -> IO [Experiment]
+         -> [Experiment a]
+         -> IO [Experiment a]
 bwaAlign dir' index' setter = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == FastqFile || x^.format == FastqGZip) $ e^.files
@@ -73,8 +75,9 @@ bwaAlign dir' index' setter = mapM $ \e -> do
 
 
 -- | Remove low quality and redundant tags.
-filterBam :: FilePath  -- ^ directory to save the results
-          -> [Experiment] -> IO [Experiment]
+filterBam :: IsDNASeq a
+          => FilePath  -- ^ directory to save the results
+          -> [Experiment a] -> IO [Experiment a]
 filterBam dir' = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == BamFile) $ e^.files
@@ -95,7 +98,8 @@ filterBam dir' = mapM $ \e -> do
     dir = fromText $ T.pack dir'
 
 -- | Remove duplicates
-removeDuplicates :: FilePath -> FilePath -> [Experiment] -> IO [Experiment]
+removeDuplicates :: IsDNASeq a
+                 => FilePath -> FilePath -> [Experiment a] -> IO [Experiment a]
 removeDuplicates picardPath dir' = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == BamFile) $ e^.files
@@ -148,7 +152,8 @@ removeDuplicates picardPath dir' = mapM $ \e -> do
   where
     dir = fromText $ T.pack dir'
 
-bamToBed :: FilePath -> [Experiment] -> IO [Experiment]
+bamToBed :: IsDNASeq a
+         => FilePath -> [Experiment a] -> IO [Experiment a]
 bamToBed dir' = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == BamFile) $ e^.files

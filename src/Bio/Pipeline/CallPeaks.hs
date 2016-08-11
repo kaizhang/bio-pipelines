@@ -40,10 +40,11 @@ defaultCallPeakOpts = CallPeakOpts
 
 -- | Input: A list of target-input duos. The first BED file in Experiment will be
 -- analyzed.
-callPeaks :: FilePath
+callPeaks :: IsDNASeq a
+          => FilePath
           -> CallPeakOptSetter
-          -> [(Experiment, Maybe Experiment)]
-          -> IO [Experiment]
+          -> [(Experiment a, Maybe (Experiment a))]
+          -> IO [Experiment a]
 callPeaks dir setter datasets = forM datasets $ \(target, input) -> do
     let targetFile = getFile target
         inputFile = fmap getFile input
