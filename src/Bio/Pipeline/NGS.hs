@@ -2,21 +2,44 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
 
-module Bio.Pipeline.NGS where
+module Bio.Pipeline.NGS
+    ( BWAOpts
+    , BWAOptSetter
+    , bwaCores
+    , bwaSeedLen
+    , bwaMaxMis
+    , bwaReadTrim
+    , defaultBWAOpts
+    , bwaAlign
+    , filterBam
+    , bamToBed
+
+    , STAROpts
+    , STAROptSetter
+    , starMkIndex
+    , starAlign
+    ) where
 
 import           Bio.Data.Experiment.Types
 import           Control.Lens
 import           Control.Monad             (forM)
 import           Control.Monad.State.Lazy
 import qualified Data.Text                 as T
-import           Turtle                    hiding (FilePath, format)
+import           Turtle                    hiding (FilePath, format, stderr)
 import qualified Turtle                    as T
+import System.IO (hPutStrLn, stderr)
+
+
+--------------------------------------------------------------------------------
+-- DNA-seq
+--------------------------------------------------------------------------------
 
 data BWAOpts = BWAOpts
     { _bwaCores    :: Int          -- ^ number of cpu cores
     , _bwaSeedLen  :: Int     -- ^ seed length, equivalent to -l
     , _bwaMaxMis   :: Int    -- ^ max mismatches in seed, equivalent to -k
-    , _bwaReadTrim :: Int       -- dynamic read trimming, equivalent to -q
+    , _bwaReadTrim :: Int       -- ^ dynamic read trimming, equivalent to -q
+    , _bwaTmpDir   :: FilePath  -- ^ temp dir
     } deriving (Show)
 
 makeLenses ''BWAOpts
@@ -27,6 +50,7 @@ defaultBWAOpts = BWAOpts
     , _bwaSeedLen = 32
     , _bwaMaxMis = 2
     , _bwaReadTrim = 5
+    , _bwaTmpDir = "./"
     }
 
 type BWAOptSetter = State BWAOpts ()
@@ -43,11 +67,11 @@ bwaAlign dir' index' setter = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == FastqFile || x^.format == FastqGZip) $ e^.files
     newFiles <- forM fls $ \fl -> do
-        let output = fromText $ T.format (fp%"/"%s%"_rep"%d%".bam") dir
-                (e^.eid) (fl^.replication)
+        let output = fromText $ T.format (fp%"/"%s%"_rep"%d%".bam")
+                dir (e^.eid) (fl^.replication)
             input = fromText $ T.pack $ fl^.location
 
-        stats <- with (mktempfile "./" "bwa_align_tmp_file_XXXXXX.sai") $ \tmp -> do
+        stats <- with (mktempfile (fromText $ T.pack $ opt^.bwaTmpDir) "bwa_align_tmp_file_XXXXXX.sai") $ \tmp -> do
             shells ( T.format (
                 "bwa aln -q "%d%" -l "%d%" -k "%d%" -t "%d%" "%fp%" "%fp%" > "%fp )
                 (opt^.bwaReadTrim) (opt^.bwaSeedLen) (opt^.bwaMaxMis) (opt^.bwaCores)
@@ -82,8 +106,8 @@ filterBam dir' = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == BamFile) $ e^.files
     newFiles <- forM fls $ \fl -> do
-        let output = fromText $ T.format (fp%"/"%s%"_rep"%d%"_filt.bam") dir
-                (e^.eid) (fl^.replication)
+        let output = fromText $ T.format (fp%"/"%s%"_rep"%d%"_filt.bam")
+                dir (e^.eid) (fl^.replication)
             input = fromText $ T.pack $ fl^.location
 
         shells ( T.format ("samtools view -F 0x70c -q 30 -b "%fp%" > "%fp)
@@ -104,11 +128,10 @@ removeDuplicates picardPath dir' = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == BamFile) $ e^.files
     newFiles <- forM fls $ \fl -> do
-        let output = fromText $ T.format (fp%"/"%s%"_rep"%d%"_filt_mono.bam") dir
-                (e^.eid) (fl^.replication)
+        let output = fromText $ T.format (fp%"/"%s%"_rep"%d%"_filt_mono.bam")
+                dir (e^.eid) (fl^.replication)
             input = fromText $ T.pack $ fl^.location
-            qcFile = fromText $ T.format (fp%"/"%s%"_rep"%d%"_picard.qc") dir
-                (e^.eid) (fl^.replication)
+            qcFile = fromText $ T.format (fp%"/"%s%"_picard.qc") dir (e^.eid)
 
         with (mktempfile "./" "picard_tmp_file_XXXXXX.bam") $ \tmp -> do
             -- Mark duplicates
@@ -168,3 +191,123 @@ bamToBed dir' = mapM $ \e -> do
     return $ files .~ newFiles $ e
   where
     dir = fromText $ T.pack dir'
+
+
+--------------------------------------------------------------------------------
+-- RNA-seq
+--------------------------------------------------------------------------------
+
+data STAROpts = STAROpts
+    { _starCmd :: T.Text
+    , _starCores :: Int
+    , _starTmpDir :: FilePath
+    }
+
+makeLenses ''STAROpts
+
+type STAROptSetter = State STAROpts ()
+
+defaultSTAROpts :: STAROpts
+defaultSTAROpts = STAROpts
+    { _starCmd = "STAR"
+    , _starCores = 1
+    , _starTmpDir = "./"
+    }
+
+
+-- | Create index files for STAR
+starMkIndex :: FilePath   -- ^ STAR command path
+            -> FilePath   -- ^ Directory used to store genome indices
+            -> [FilePath] -- ^ Fastq files
+            -> FilePath   -- ^ Annotation file
+            -> Int        -- ^ The length of the genomic sequence
+                          -- around the annotated junction to be used in
+                          -- constructing the splice junctions database. Set it
+                          -- to "ReadLength-1" or 100 for general purpose.
+            -> IO FilePath
+starMkIndex star dir fstqs anno r = do
+    dirExist <- testdir (fromText $ T.pack dir)
+    if dirExist
+        then hPutStrLn stderr "Index directory exists. Skipped."
+        else do
+            mktree $ fromText $ T.pack dir
+            shells cmd empty
+    return dir
+  where
+    cmd = T.format (s%" --runThreadN 1 --runMode genomeGenerate --genomeDir "%s%
+        " --genomeFastaFiles "%s%" --sjdbGTFfile "%s%" --sjdbOverhang "%d)
+        (T.pack star) (T.pack dir) fstqs' (T.pack anno) r
+    fstqs' = T.intercalate " " $ map T.pack fstqs
+
+-- | Align RNA-seq raw reads with STAR
+starAlign :: FilePath                    -- ^ Output directory
+          -> FilePath                    -- ^ STAR genome index
+          -> STAROptSetter               -- ^ Options
+          -> [Experiment RNA_Seq]
+          -> IO [Experiment RNA_Seq]
+starAlign dir' index' setter = mapM $ \e -> do
+    mktree dir
+    let fls = filter (\x -> x^.format == FastqFile || x^.format == FastqGZip) $ e^.files
+    newFiles <- forM fls $ \fl -> with (mktempdir
+        (fromText $ T.pack $ opt^.starTmpDir) "STAR_align_tmp_dir_XXXXXX") $
+        \tmp_dir -> do
+            let outputGenome = fromText $ T.format (fp%"/"%s%"_rep"%d%"_genome.bam")
+                    dir (e^.eid) (fl^.replication)
+                outputAnno = fromText $ T.format (fp%"/"%s%"_rep"%d%"_anno.bam")
+                    dir (e^.eid) (fl^.replication)
+                input = fromText $ T.pack $ fl^.location
+
+            shells ( T.format (
+                s%" --genomeDir "%fp%" --readFilesIn "%fp%
+                " --outFileNamePrefix "%fp%" --runThreadN "%d%
+                (if fl^.format == FastqGZip then " --readFilesCommand zcat" else "")%
+                " --genomeLoad NoSharedMemory --limitBAMsortRAM 0"%
+
+                " --outFilterType BySJout"%     -- reduces the number of ”spurious” junctions
+                " --outFilterMultimapNmax 20"%  -- max number of multiple alignments allowed for a read: if exceeded, the read is considered unmapped
+                " --alignSJoverhangMin 8"%      -- minimum overhang for unannotated junctions
+                " --alignSJDBoverhangMin 1"%    -- minimum overhang for annotated junctions
+                " --outFilterMismatchNmax 999"% -- maximum number of mismatches per pair, large number switches off this filter
+                " --outFilterMismatchNoverReadLmax 0.04"% -- max number of mismatches per pair relative to read length: for 2x100b, max number of mismatches is 0.06*200=8 for the paired read
+                " --alignIntronMin 20"%         -- minimum intron length
+                " --alignIntronMax 1000000"%    -- maximum intron length
+                " --alignMatesGapMax 1000000"%  -- maximum genomic distance between mates
+
+                " --outSAMunmapped Within  --outSAMattributes NH HI AS NM MD"%
+                " --outSAMheaderCommentFile COfile.txt"%
+                " --outSAMheaderHD @HD VN:1.4 SO:coordinate"%
+                " --outSAMstrandField intronMotif --outSAMtype BAM SortedByCoordinate"%
+
+                " --quantMode TranscriptomeSAM --sjdbScore 1"
+                ) (opt^.starCmd) index input tmp_dir (opt^.starCores) ) empty
+
+            mv (fromText $ T.format (fp%"/Aligned.sortedByCoord.out.bam") tmp_dir)
+                outputGenome
+
+            -- Sorting annotation bam
+            shells ( T.format ("samtools sort -@ "%d%" -T "%fp%
+                "/temp.nnnnnn.bam -o "%fp%
+                " "%fp%"/Aligned.toTranscriptome.out.bam")
+                (opt^.starCores) tmp_dir outputAnno tmp_dir ) empty
+
+            -- Collect bam flagstats
+            (_, stats1) <- shellStrict
+                (T.format ("samtools flagstat "%fp) outputGenome) empty
+            (_, stats2) <- shellStrict
+                (T.format ("samtools flagstat "%fp) outputAnno) empty
+
+            let genomeAlignFile = info .~ [("stat", stats1)] $
+                    format .~ BamFile $
+                    location .~ T.unpack (T.format fp outputGenome) $
+                    keywords .~ ["raw bam file"] $ fl
+                annoFile = info .~ [("stat", stats2)] $
+                    format .~ BamFile $
+                    location .~ T.unpack (T.format fp outputAnno) $
+                    keywords .~ ["raw anno file"] $ fl
+            return [genomeAlignFile, annoFile]
+
+    return $ files .~ concat newFiles $ e
+  where
+    opt = execState setter defaultSTAROpts
+    dir = fromText $ T.pack dir'
+    index = fromText $ T.pack index'
