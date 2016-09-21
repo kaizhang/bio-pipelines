@@ -10,8 +10,10 @@ module Bio.Pipeline.NGS
     , bwaMaxMis
     , bwaReadTrim
     , defaultBWAOpts
+    , bwaMkIndex
     , bwaAlign
     , filterBam
+    , removeDuplicates
     , bamToBed
 
     , STAROpts
@@ -55,6 +57,23 @@ defaultBWAOpts = BWAOpts
 
 type BWAOptSetter = State BWAOpts ()
 
+-- | Generate BWA genome index
+bwaMkIndex :: FilePath
+           -> FilePath   -- ^ Index prefix, e.g., /path/genome.fa
+           -> IO FilePath
+bwaMkIndex input prefix = do
+    fileExist <- testfile (fromText $ T.pack prefix)
+    if fileExist
+        then hPutStrLn stderr "BWA index exists. Skipped."
+        else do
+            mktree $ fromText dir
+            shells (T.format ("ln -s "%s%" "%s) (T.pack input) (T.pack prefix)) empty
+            hPutStrLn stderr "Generating BWA index"
+            shells (T.format ("bwa index -p "%s%" -a bwtsw "%s)
+                (T.pack prefix) (T.pack input)) empty
+    return prefix
+  where
+    dir = fst $ T.breakOnEnd "/" $ T.pack prefix
 
 -- | Tag alignment with BWA aligner.
 bwaAlign :: IsDNASeq a
@@ -228,9 +247,10 @@ starMkIndex :: FilePath   -- ^ STAR command path
 starMkIndex star dir fstqs anno r = do
     dirExist <- testdir (fromText $ T.pack dir)
     if dirExist
-        then hPutStrLn stderr "Index directory exists. Skipped."
+        then hPutStrLn stderr "STAR index directory exists. Skipped."
         else do
             mktree $ fromText $ T.pack dir
+            hPutStrLn stderr "Generating STAR indices"
             shells cmd empty
     return dir
   where
