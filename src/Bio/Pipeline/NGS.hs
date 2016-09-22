@@ -90,7 +90,7 @@ bwaAlign dir' index' setter = mapM $ \e -> do
                 dir (e^.eid) (fl^.replication)
             input = fromText $ T.pack $ fl^.location
 
-        stats <- with (mktempfile (fromText $ T.pack $ opt^.bwaTmpDir) "bwa_align_tmp_file_XXXXXX.sai") $ \tmp -> do
+        stats <- with (mktempfile (fromText $ T.pack $ opt^.bwaTmpDir) "bwa_align_tmp_file.sai") $ \tmp -> do
             shells ( T.format (
                 "bwa aln -q "%d%" -l "%d%" -k "%d%" -t "%d%" "%fp%" "%fp%" > "%fp )
                 (opt^.bwaReadTrim) (opt^.bwaSeedLen) (opt^.bwaMaxMis) (opt^.bwaCores)
@@ -152,7 +152,7 @@ removeDuplicates picardPath dir' = mapM $ \e -> do
             input = fromText $ T.pack $ fl^.location
             qcFile = fromText $ T.format (fp%"/"%s%"_picard.qc") dir (e^.eid)
 
-        with (mktempfile "./" "picard_tmp_file_XXXXXX.bam") $ \tmp -> do
+        with (mktempfile "./" "picard_tmp_file.bam") $ \tmp -> do
             -- Mark duplicates
             shells ( T.format ("java -Xmx4G -jar "%s%" MarkDuplicates INPUT="%fp%
                 " OUTPUT="%fp%" METRICS_FILE="%fp%
@@ -269,7 +269,7 @@ starAlign dir' index' setter = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == FastqFile || x^.format == FastqGZip) $ e^.files
     newFiles <- forM fls $ \fl -> with (mktempdir
-        (fromText $ T.pack $ opt^.starTmpDir) "STAR_align_tmp_dir_XXXXXX") $
+        (fromText $ T.pack $ opt^.starTmpDir) "STAR_align_tmp_dir") $
         \tmp_dir -> do
             let outputGenome = fromText $ T.format (fp%"/"%s%"_rep"%d%"_genome.bam")
                     dir (e^.eid) (fl^.replication)
@@ -279,7 +279,7 @@ starAlign dir' index' setter = mapM $ \e -> do
 
             shells ( T.format (
                 s%" --genomeDir "%fp%" --readFilesIn "%fp%
-                " --outFileNamePrefix "%fp%" --runThreadN "%d%
+                " --outFileNamePrefix "%fp%"/ --runThreadN "%d%
                 (if fl^.format == FastqGZip then " --readFilesCommand zcat" else "")%
                 " --genomeLoad NoSharedMemory --limitBAMsortRAM 0"%
 
