@@ -18,18 +18,30 @@ module Bio.Pipeline.NGS
 
     , STAROpts
     , STAROptSetter
+    , starCmd
+    , starCores
+    , starTmpDir
     , starMkIndex
     , starAlign
+
+    , RSEMOpts
+    , RSEMOptSetter
+    , rsemPath
+    , rsemCores
+    , rsemSeed
+    , rsemMkIndex
+    , rsemQuant
     ) where
 
 import           Bio.Data.Experiment.Types
 import           Control.Lens
 import           Control.Monad             (forM)
 import           Control.Monad.State.Lazy
+import           Data.Int                  (Int32)
 import qualified Data.Text                 as T
+import           System.IO                 (hPutStrLn, stderr)
 import           Turtle                    hiding (FilePath, format, stderr)
 import qualified Turtle                    as T
-import System.IO (hPutStrLn, stderr)
 
 
 --------------------------------------------------------------------------------
@@ -217,8 +229,8 @@ bamToBed dir' = mapM $ \e -> do
 --------------------------------------------------------------------------------
 
 data STAROpts = STAROpts
-    { _starCmd :: T.Text
-    , _starCores :: Int
+    { _starCmd    :: T.Text
+    , _starCores  :: Int
     , _starTmpDir :: FilePath
     }
 
@@ -319,11 +331,11 @@ starAlign dir' index' setter = mapM $ \e -> do
             let genomeAlignFile = info .~ [("stat", stats1)] $
                     format .~ BamFile $
                     location .~ T.unpack (T.format fp outputGenome) $
-                    keywords .~ ["raw bam file"] $ fl
+                    keywords .~ ["RNA genome align bam"] $ fl
                 annoFile = info .~ [("stat", stats2)] $
                     format .~ BamFile $
                     location .~ T.unpack (T.format fp outputAnno) $
-                    keywords .~ ["raw anno file"] $ fl
+                    keywords .~ ["RNA anno align bam"] $ fl
             return [genomeAlignFile, annoFile]
 
     return $ files .~ concat newFiles $ e
@@ -331,3 +343,72 @@ starAlign dir' index' setter = mapM $ \e -> do
     opt = execState setter defaultSTAROpts
     dir = fromText $ T.pack dir'
     index = fromText $ T.pack index'
+
+
+rsemMkIndex :: FilePath   -- ^ Prefix
+            -> FilePath   -- ^ annotation file in GFF3 format
+            -> [FilePath] -- ^ fastq files
+            -> IO FilePath
+rsemMkIndex prefix anno fstqs = do
+    dirExist <- testdir (fromText $ T.pack dir)
+    if dirExist
+        then hPutStrLn stderr "RSEM index directory exists. Skipped."
+        else do
+            mktree $ fromText $ T.pack dir
+            hPutStrLn stderr "Generating RSEM indices"
+            shells cmd empty
+    return prefix
+  where
+    cmd = T.format ("rsem-prepare-reference --gtf "%s%" "%s%" "%s)
+        (T.pack anno) (T.intercalate "," $ map T.pack fstqs) (T.pack prefix)
+    dir = T.unpack $ fst $ T.breakOnEnd "/" $ T.pack prefix
+
+
+data RSEMOpts = RSEMOpts
+    { _rsemPath  :: T.Text
+    , _rsemCores :: Int
+    , _rsemSeed  :: Int32
+    }
+
+makeLenses ''RSEMOpts
+
+type RSEMOptSetter = State RSEMOpts ()
+
+defaultRSEMOpts :: RSEMOpts
+defaultRSEMOpts = RSEMOpts
+    { _rsemPath = ""
+    , _rsemCores = 1
+    , _rsemSeed = 12345
+    }
+
+-- | Gene and transcript quantification using rsem
+rsemQuant :: FilePath
+          -> FilePath
+          -> RSEMOptSetter
+          -> [Experiment RNA_Seq]
+          -> IO [Experiment RNA_Seq]
+rsemQuant dir' indexPrefix setter = mapM $ \e -> do
+    mktree dir
+    let fls = filter (\x -> x^.format == BamFile &&
+            "RNA anno align bam" `elem` x^.keywords) $ e^.files
+
+    newFiles <- forM fls $ \fl -> do
+        let input = fromText $ T.pack $ fl^.location
+            output = T.format (fp%"/"%s%"_rep"%d%"_rsem") dir (e^.eid) (fl^.replication)
+        shells ( T.format ( s%
+            "rsem-calculate-expression --bam --estimate-rspd --calc-ci --seed "%d%
+            " -p "%d%" --no-bam-output --ci-memory 30000 "%fp%" "%s%" "%s
+            ) (opt^.rsemPath) (opt^.rsemSeed) (opt^.rsemCores) input
+            (T.pack indexPrefix) output) empty
+
+        let geneQuant = format .~ Other $
+                location .~ T.unpack output ++ ".genes.results" $
+                keywords .~ ["gene quantification"] $ fl
+            transcirptQuant = format .~ Other $
+                location .~ T.unpack output ++ ".isoforms.results" $
+                keywords .~ ["transcript quantification"] $ fl
+        return [geneQuant, transcirptQuant]
+    return $ files .~ concat newFiles $ e
+  where
+    opt = execState setter defaultRSEMOpts
+    dir = fromText $ T.pack dir'

@@ -15,7 +15,6 @@ scanMotifs :: FilePath   -- ^ genome file
 scanMotifs genome motifs p output fls = withGenome genome $ \g -> do
     ms <- readMEME motifs
     beds <- mapM readBed' fls :: IO [[BED3]]
-    sites <- mergeBed (concat beds) =$= motifScan g ms def p =$=
-        getMotifScore g ms def $$ sinkList
-    writeBed' output $ getMotifPValue ms def sites
+    mergeBed (concat beds) =$= motifScan g ms def p =$=
+        getMotifScore g ms def =$= getMotifPValue ms def $$ writeBed output
     return output
