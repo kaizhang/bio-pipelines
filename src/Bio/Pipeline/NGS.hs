@@ -109,9 +109,9 @@ bwaAlign dir' index' setter = mapM $ \e -> do
                 index input tmp ) empty
             shells ( T.format (
                 "bwa samse "%fp%" "%fp%" "%fp%
-                " | samtools view -Su - | samtools sort - "%fp )
-                index tmp input output ) empty
-            mv (fromText $ T.format (fp%".bam") output) output
+                " | samtools view -Su - | samtools sort - -@ "%d%" -o "%fp%" -T "%s)
+                index tmp input (opt^.bwaCores) output
+                (T.pack $ opt^.bwaTmpDir ++ "/bam_sort_tmp_file.nnnn.bam") ) empty
             (i, stats) <- shellStrict (T.format ("samtools flagstat "%fp) output) empty
             case i of
                 ExitSuccess -> return stats
