@@ -38,28 +38,26 @@ defaultCallPeakOpts = CallPeakOpts
     --, callPeakOptsBroadCutoff = 0.05
     }
 
--- | Input: A list of target-input duos. The first BED file in Experiment will be
--- analyzed.
+-- | Input: A list of target-input duos.
 callPeaks :: IsDNASeq a
           => FilePath
           -> CallPeakOptSetter
-          -> [(Experiment a, Maybe (Experiment a))]
+          -> [(Experiment a, Maybe File)]
           -> IO [Experiment a]
-callPeaks dir setter datasets = forM datasets $ \(target, input) -> do
-    let targetFile = getFile target
-        inputFile = fmap getFile input
-        output = T.unpack $ T.format (s%"/"%s%"_rep"%d%".NarrowPeak") (T.pack dir)
-            (target^.eid) (targetFile^.replication)
-        peakFile = format .~ NarrowPeakFile $
-            location .~ output $
-            keywords .~ ["macs2"] $ targetFile
-    callPeaksHelper targetFile inputFile output opt
-    return $ files .~ [peakFile] $ target
+callPeaks dir setter datasets = forM datasets $ \(target, inputFile) -> do
+    newFiles <- forM (getFile target) $ \targetFile -> do
+        let output = T.unpack $ T.format (s%"/"%s%"_rep"%d%".NarrowPeak") (T.pack dir)
+                (target^.eid) (targetFile^.replication)
+            peakFile = format .~ NarrowPeakFile $
+                location .~ output $
+                keywords .~ ["macs2"] $ targetFile
+        callPeaksHelper targetFile inputFile output opt
+        return peakFile
+    return $ files .~ newFiles $ target
   where
     opt = execState setter defaultCallPeakOpts
-    getFile x = head $ filter
+    getFile x = filter
         (\fl -> fl^.format == BedFile || fl^.format == BedGZip) $ x^.files
-
 
 callPeaksHelper :: File         -- ^ target
           -> Maybe File   -- ^ input

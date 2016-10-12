@@ -15,6 +15,7 @@ module Bio.Pipeline.NGS
     , filterBam
     , removeDuplicates
     , bamToBed
+    , mergeReplicatesBed
 
     , STAROpts
     , STAROptSetter
@@ -220,6 +221,20 @@ bamToBed dir' = mapM $ \e -> do
             (T.pack $ fl^.location) output) empty
         return bedFile
     return $ files .~ newFiles $ e
+  where
+    dir = fromText $ T.pack dir'
+
+-- | Merge multiple gzipped BED files.
+mergeReplicatesBed :: FilePath -> [Experiment a] -> IO [Experiment a]
+mergeReplicatesBed dir' = mapM $ \e -> do
+    mktree dir
+    let fls = map (^.location) $ filter (\x -> x^.format == BedGZip) $ e^.files
+        output = T.format (fp%"/"%s%"_rep0.bed.gz") dir (e^.eid)
+        bedFile = format .~ BedGZip $
+                  location .~ T.unpack output $ emptyFile
+    shells (T.format ("zcat "%s%" | gzip -c > "%s)
+        (T.unwords $ map T.pack fls) output) empty
+    return $ files .~ [bedFile] $ e
   where
     dir = fromText $ T.pack dir'
 
