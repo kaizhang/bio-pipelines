@@ -16,5 +16,6 @@ scanMotifs genome motifs p output fls = withGenome genome $ \g -> do
     ms <- readMEME motifs
     beds <- mapM readBed' fls :: IO [[BED3]]
     mergeBed (concat beds) =$= motifScan g ms def p =$=
-        getMotifScore g ms def =$= getMotifPValue ms def $$ writeBed output
+        getMotifScore g ms def =$= getMotifPValue (Just (1 - p * 10)) ms def $$
+        writeBed output
     return output

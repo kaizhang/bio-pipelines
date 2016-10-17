@@ -29,7 +29,7 @@ library
     , bytestring
     , binary
     , bio-experiments
-    , bioinformatics-toolkit
+    , bioinformatics-toolkit >=0.2.4
     , conduit-combinators
     , cereal
     , data-default
