@@ -14,7 +14,7 @@ module Bio.Pipeline.NGS
     , bwaAlign
     , filterBam
     , removeDuplicates
-    , bamToBed
+    , bam2Bed
     , mergeReplicatesBed
 
     , STAROpts
@@ -35,6 +35,10 @@ module Bio.Pipeline.NGS
     ) where
 
 import           Bio.Data.Experiment.Types
+import Bio.Data.Bam (readBam, bamToBed, runBam)
+import Bio.Data.Bed (toLine)
+import Conduit
+import Data.Conduit.Zlib (gzip)
 import           Control.Lens
 import           Control.Monad             (forM)
 import           Control.Monad.State.Lazy
@@ -177,19 +181,8 @@ removeDuplicates picardPath dir' = mapM $ \e -> do
             shells (T.format ("samtools index "%fp) output) empty
             (_, stats) <- shellStrict (T.format ("samtools flagstat "%fp) output) empty
 
-            -- Compute library complexity.
-            -- Sort by position and strand.
-            -- Obtain unique count statistics
-            -- PBC File output
-            -- TotalReadPairs [tab] DistinctReadPairs [tab] OneReadPair [tab]
-            -- TwoReadPairs [tab] NRF=Distinct/Total [tab]
-            -- PBC1=OnePair/Distinct [tab] PBC2=OnePair/TwoPair
-            (_, qc) <- shellStrict (T.format ("bedtools bamtobed -i "%fp%
-                " | awk 'BEGIN{OFS=\"\\t\"}{print $1,$2,$3,$6}' | grep -v 'chrM' | sort | uniq -c | awk 'BEGIN{mt=0;m0=0;m1=0;m2=0} ($1==1){m1=m1+1} ($1==2){m2=m2+1} {m0=m0+1} {mt=mt+$1} END{printf \"%d\\t%d\\t%d\\t%d\\t%f\\t%f\\t%f\\n\", mt,m0,m1,m2,m0/mt,m1/m0,m1/m2}'") tmp
-                ) empty
-
             let finalBam = format .~ BamFile $
-                           info .~ [("stat", stats), ("PBC_QC", qc)] $
+                           info .~ [("stat", stats)] $
                            keywords .~ ["processed bam file"] $
                            location .~ T.unpack (T.format fp output) $ fl
                 finalBai = format .~ BaiFile $
@@ -207,18 +200,18 @@ removeDuplicates picardPath dir' = mapM $ \e -> do
   where
     dir = fromText $ T.pack dir'
 
-bamToBed :: IsDNASeq a
-         => FilePath -> [Experiment a] -> IO [Experiment a]
-bamToBed dir' = mapM $ \e -> do
+bam2Bed :: IsDNASeq a
+        => FilePath -> [Experiment a] -> IO [Experiment a]
+bam2Bed dir' = mapM $ \e -> do
     mktree dir
     let fls = filter (\x -> x^.format == BamFile) $ e^.files
     newFiles <- forM fls $ \fl -> do
-        let output = T.format (fp%"/"%s%"bed.gz") dir $ fst $ T.breakOnEnd "." $
-                snd $ T.breakOnEnd "/" $ T.pack $ fl^.location
+        let output = T.unpack $ T.format (fp%"/"%s%"bed.gz") dir $ fst $
+                T.breakOnEnd "." $ snd $ T.breakOnEnd "/" $ T.pack $ fl^.location
             bedFile = format .~ BedGZip $
-                      location .~ T.unpack output $ fl
-        shells (T.format ("bedtools bamtobed -i "%s%" | gzip -c > "%s)
-            (T.pack $ fl^.location) output) empty
+                      location .~ output $ fl
+        runBam $ readBam (fl^.location) =$= bamToBed =$= mapC toLine =$=
+            gzip $$ sinkFileBS output
         return bedFile
     return $ files .~ newFiles $ e
   where
