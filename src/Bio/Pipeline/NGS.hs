@@ -107,16 +107,19 @@ bwaAlign dir' index' setter = mapM $ \e -> do
                 dir (e^.eid) (fl^.replication)
             input = fromText $ T.pack $ fl^.location
 
-        stats <- with (mktempfile (fromText $ T.pack $ opt^.bwaTmpDir) "bwa_align_tmp_file.sai") $ \tmp -> do
+        stats <- with ( mktempdir (fromText $ T.pack $ opt^.bwaTmpDir) "bwa_align_tmp_dir" ) $ \tmpdir -> do
+            let tmp_sai = T.format (fp%"/tmp.sai") tmpdir
+                tmp_sort_bam = T.format (fp%"/sort_bam_tmp") tmpdir
+            -- Align reads and save the results to tmp_sai.
             shells ( T.format (
-                "bwa aln -q "%d%" -l "%d%" -k "%d%" -t "%d%" "%fp%" "%fp%" > "%fp )
+                "bwa aln -q "%d%" -l "%d%" -k "%d%" -t "%d%" "%fp%" "%fp%" > "%s )
                 (opt^.bwaReadTrim) (opt^.bwaSeedLen) (opt^.bwaMaxMis) (opt^.bwaCores)
-                index input tmp ) empty
+                index input tmp_sai ) empty
+            -- Convert sai to sorted bam.
             shells ( T.format (
-                "bwa samse "%fp%" "%fp%" "%fp%
+                "bwa samse "%fp%" "%s%" "%fp%
                 " | samtools view -Su - | samtools sort - -@ "%d%" -o "%fp%" -T "%s)
-                index tmp input (opt^.bwaCores) output
-                (T.pack $ opt^.bwaTmpDir ++ "/bam_sort_tmp_file.nnnn.bam") ) empty
+                index tmp_sai input (opt^.bwaCores) output tmp_sort_bam ) empty
             (i, stats) <- shellStrict (T.format ("samtools flagstat "%fp) output) empty
             case i of
                 ExitSuccess -> return stats
@@ -326,7 +329,7 @@ starAlign dir' index' setter = mapM $ \e -> do
 
             -- Sorting annotation bam
             shells ( T.format ("samtools sort -@ "%d%" -T "%fp%
-                "/temp.nnnnnn.bam -o "%fp%
+                "/sort_bam_tmp -o "%fp%
                 " "%fp%"/Aligned.toTranscriptome.out.bam")
                 (opt^.starCores) tmp_dir outputAnno tmp_dir ) empty
 
