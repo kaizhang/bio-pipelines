@@ -214,7 +214,7 @@ bam2Bed dir' = mapM $ \e -> do
             bedFile = format .~ BedGZip $
                       location .~ output $ fl
         runBam $ readBam (fl^.location) =$= bamToBed =$= mapC toLine =$=
-            gzip $$ sinkFileBS output
+            unlinesAsciiC =$= gzip $$ sinkFileBS output
         return bedFile
     return $ files .~ newFiles $ e
   where
