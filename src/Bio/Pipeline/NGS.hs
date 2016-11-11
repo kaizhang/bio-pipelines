@@ -74,6 +74,16 @@ defaultBWAOpts = BWAOpts
 
 type BWAOptSetter = State BWAOpts ()
 
+{-
+-- Determine whether bwa index has been generated
+isBWAIndexExist :: FilePath -> IO Bool
+isBWAIndexExist dir = do
+    fileExist <- testfile (fromText $ T.pack dir ++ "/")
+    ls
+  where
+    filename = "the_suffix_of_this_file_is_the_prefix_of_bwa_indices."
+    -}
+
 -- | Generate BWA genome index
 bwaMkIndex :: FilePath
            -> FilePath   -- ^ Index prefix, e.g., /path/genome.fa
@@ -84,7 +94,7 @@ bwaMkIndex input prefix = do
         then hPutStrLn stderr "BWA index exists. Skipped."
         else do
             mktree $ fromText dir
-            shells (T.format ("ln -s "%s%" "%s) (T.pack input) (T.pack prefix)) empty
+            cp (fromText $ T.pack input) $ fromText $ T.pack prefix
             hPutStrLn stderr "Generating BWA index"
             shells (T.format ("bwa index -p "%s%" -a bwtsw "%s)
                 (T.pack prefix) (T.pack input)) empty

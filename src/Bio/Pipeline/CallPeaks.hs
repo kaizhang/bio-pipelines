@@ -65,7 +65,7 @@ callPeaksHelper :: File         -- ^ target
           -> CallPeakOpts
           -> IO ()
 callPeaksHelper target input output opt = with ( mktempdir (fromText $ T.pack tmp)
-    "macs2_tmp_dir_XXXXXX" ) $ \tmpDir -> do
+    "macs2_tmp_dir" ) $ \tmpDir -> do
         let cmd1 = T.format ("macs2 callpeak -t "%s%" -f BED -g "%s%" --outdir "%fp%
                 " --tempdir "%fp%" --keep-dup all -q "%f)
                 (T.pack $ getFile target) (T.pack $ opt^.gSize)
