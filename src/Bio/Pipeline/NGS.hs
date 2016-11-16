@@ -328,7 +328,7 @@ starAlign dir' index' setter = mapOfFiles fn
                 s%" --genomeDir "%fp%" --readFilesIn "%s%
                 " --outFileNamePrefix "%fp%"/ --runThreadN "%d%
                 (if (head fls)^.format == FastqGZip then " --readFilesCommand zcat" else "")%
-                " --genomeLoad NoSharedMemory --limitBAMsortRAM 0"%
+                " --genomeLoad NoSharedMemory --limitBAMsortRAM 60000000000"%
 
                 " --outFilterType BySJout"%     -- reduces the number of ”spurious” junctions
                 " --outFilterMultimapNmax 20"%  -- max number of multiple alignments allowed for a read: if exceeded, the read is considered unmapped
