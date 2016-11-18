@@ -352,7 +352,7 @@ starAlign dir' index' setter = mapOfFiles fn
                 outputGenome
 
             -- Sorting annotation bam
-            shells ( T.format ("samtools sort -@ "%d%" -T "%fp%
+            shells ( T.format ("samtools sort -n -@ "%d%" -T "%fp%
                 "/sort_bam_tmp -o "%fp%
                 " "%fp%"/Aligned.toTranscriptome.out.bam")
                 (opt^.starCores) tmp_dir outputAnno tmp_dir ) empty
