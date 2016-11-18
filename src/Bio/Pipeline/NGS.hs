@@ -22,6 +22,7 @@ module Bio.Pipeline.NGS
     , STAROptSetter
     , starCmd
     , starCores
+    , starSort
     , starTmpDir
     , starMkIndex
     , starAlign
@@ -263,6 +264,7 @@ data STAROpts = STAROpts
     { _starCmd    :: T.Text
     , _starCores  :: Int
     , _starTmpDir :: FilePath
+    , _starSort :: Bool
     }
 
 makeLenses ''STAROpts
@@ -274,6 +276,7 @@ defaultSTAROpts = STAROpts
     { _starCmd = "STAR"
     , _starCores = 1
     , _starTmpDir = "./"
+    , _starSort = False
     }
 
 
@@ -328,7 +331,7 @@ starAlign dir' index' setter = mapOfFiles fn
                 s%" --genomeDir "%fp%" --readFilesIn "%s%
                 " --outFileNamePrefix "%fp%"/ --runThreadN "%d%
                 (if (head fls)^.format == FastqGZip then " --readFilesCommand zcat" else "")%
-                " --genomeLoad NoSharedMemory --limitBAMsortRAM 60000000000"%
+                " --genomeLoad NoSharedMemory"%
 
                 " --outFilterType BySJout"%     -- reduces the number of ”spurious” junctions
                 " --outFilterMultimapNmax 20"%  -- max number of multiple alignments allowed for a read: if exceeded, the read is considered unmapped
@@ -343,19 +346,23 @@ starAlign dir' index' setter = mapOfFiles fn
                 " --outSAMunmapped Within  --outSAMattributes NH HI AS NM MD"%
                 " --outSAMheaderCommentFile COfile.txt"%
                 " --outSAMheaderHD @HD VN:1.4 SO:coordinate"%
-                " --outSAMtype BAM SortedByCoordinate"%
+                (if opt^.starSort then " --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM 60000000000" else "")%
                 (if pairedEnd e then "" else " --outSAMstrandField intronMotif")%
                 " --quantMode TranscriptomeSAM --sjdbScore 1"
                 ) (opt^.starCmd) index inputs tmp_dir (opt^.starCores) ) empty
 
-            mv (fromText $ T.format (fp%"/Aligned.sortedByCoord.out.bam") tmp_dir)
-                outputGenome
+            let starOutput | opt^.starSort = "/Aligned.sortedByCoord.out.bam"
+                           | otherwise = "/Aligned.out.bam"
+            mv (fromText $ T.format (fp%starOutput) tmp_dir) outputGenome
 
             -- Sorting annotation bam
-            shells ( T.format ("samtools sort -n -@ "%d%" -T "%fp%
-                "/sort_bam_tmp -o "%fp%
-                " "%fp%"/Aligned.toTranscriptome.out.bam")
-                (opt^.starCores) tmp_dir outputAnno tmp_dir ) empty
+            if opt^.starSort
+                then shells ( T.format ("samtools sort -@ "%d%" -T "%fp%
+                        "/sort_bam_tmp -o "%fp%
+                        " "%fp%"/Aligned.toTranscriptome.out.bam")
+                        (opt^.starCores) tmp_dir outputAnno tmp_dir ) empty
+                else mv (fromText $ T.format
+                        (fp%"/Aligned.toTranscriptome.out.bam") tmp_dir) outputAnno
 
             -- Collect bam flagstats
             (_, stats1) <- shellStrict
