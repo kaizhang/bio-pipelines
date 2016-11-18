@@ -346,7 +346,7 @@ starAlign dir' index' setter = mapOfFiles fn
                 " --outSAMunmapped Within  --outSAMattributes NH HI AS NM MD"%
                 " --outSAMheaderCommentFile COfile.txt"%
                 " --outSAMheaderHD @HD VN:1.4 SO:coordinate"%
-                (if opt^.starSort then " --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM 60000000000" else "")%
+                (if opt^.starSort then " --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM 60000000000" else " --outSAMtype BAM Unsorted")%
                 (if pairedEnd e then "" else " --outSAMstrandField intronMotif")%
                 " --quantMode TranscriptomeSAM --sjdbScore 1"
                 ) (opt^.starCmd) index inputs tmp_dir (opt^.starCores) ) empty
