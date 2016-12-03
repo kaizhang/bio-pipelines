@@ -6,7 +6,15 @@
 {-# LANGUAGE TemplateHaskell        #-}
 {-# LANGUAGE TypeSynonymInstances   #-}
 
-module Bio.Pipeline.CallPeaks where
+module Bio.Pipeline.CallPeaks
+    ( CallPeakOpts(..)
+    , CallPeakOptSetter
+    , tmpDir
+    , qValue
+    , gSize
+    , defaultCallPeakOpts
+    , callPeaks
+    ) where
 
 import           Bio.Data.Experiment.Types
 import           Control.Lens
@@ -38,13 +46,13 @@ defaultCallPeakOpts = CallPeakOpts
     --, callPeakOptsBroadCutoff = 0.05
     }
 
--- | Input: A list of target-input duos.
+-- | Input: target and input.
 callPeaks :: (IsDNASeq e, Experiment e)
           => FilePath
           -> CallPeakOptSetter
-          -> [(e, Maybe File)]
-          -> IO [e]
-callPeaks dir setter = id traverse $ \(target, inputFile) ->
+          -> (e, Maybe File)
+          -> IO e
+callPeaks dir setter (target, inputFile) =
     flip (id (replicates.traverse)) target $ \rep ->
     flip (id files) rep $ fmap concat . mapM ( \flset -> case flset of
         Single fl -> if fl^.format == BedFile || fl^.format == BedGZip
@@ -53,7 +61,7 @@ callPeaks dir setter = id traverse $ \(target, inputFile) ->
                         (T.pack dir) (target^.eid) (rep^.number)
                     peakFile = Single $ format .~ NarrowPeakFile $
                         location .~ output $
-                        keywords .~ ["macs2"] $ fl
+                        tags .~ ["macs2"] $ fl
                 callPeaksHelper fl inputFile output opt
                 return [peakFile]
             else return []

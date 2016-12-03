@@ -16,7 +16,7 @@ getPrefix x = if suffix == "gz"
 
 mapOfFiles :: Experiment e
            => (e -> Replicate -> FileSet -> IO [FileSet])
-           -> [e] -> IO [e]
-mapOfFiles fn = id traverse $ \e -> flip (id (replicates.traverse)) e $ \r ->
+           -> e -> IO e
+mapOfFiles fn e = flip (id (replicates.traverse)) e $ \r ->
     id files (fmap concat . mapM (fn e r)) r
 {-# INLINE mapOfFiles #-}

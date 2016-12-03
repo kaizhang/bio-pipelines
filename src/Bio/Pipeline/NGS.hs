@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 
 module Bio.Pipeline.NGS
@@ -111,8 +112,8 @@ bwaAlign :: (NGS e, IsDNASeq e, Experiment e)
          => FilePath  -- ^ Directory to save the results
          -> FilePath  -- ^ Genome index
          -> BWAOptSetter
-         -> [e]
-         -> IO [e]
+         -> e
+         -> IO e
 bwaAlign dir' index' setter = mapOfFiles fn
   where
     fn e r (Single fl) = if fl^.format == FastqFile || fl^.format == FastqGZip
@@ -135,15 +136,9 @@ bwaAlign dir' index' setter = mapOfFiles fn
                     "bwa samse "%fp%" "%s%" "%fp%
                     " | samtools view -Su - | samtools sort - -@ "%d%" -o "%fp%" -T "%s)
                     index tmp_sai input (opt^.bwaCores) output tmp_sort_bam ) empty
-                (i, stats) <- shellStrict (T.format ("samtools flagstat "%fp) output) empty
-                case i of
-                    ExitSuccess -> return stats
-                    _ -> error "samtools error!"
 
-            return [ Single $ info .~ [("stat", stats)] $
-                              format .~ BamFile $
-                              location .~ T.unpack (T.format fp output) $
-                              keywords .~ ["raw bam file"] $ fl
+            return [ Single $ format .~ BamFile $
+                              location .~ T.unpack (T.format fp output) $ fl
                    ]
         else return []
     fn _ _ _ = return []
@@ -154,7 +149,7 @@ bwaAlign dir' index' setter = mapOfFiles fn
 -- | Remove low quality and redundant tags.
 filterBam :: (NGS e, IsDNASeq e, Experiment e)
           => FilePath  -- ^ directory to save the results
-          -> [e] -> IO [e]
+          -> e -> IO e
 filterBam dir' = mapOfFiles fn
   where
     fn e r (Single fl) = if fl^.format == BamFile
@@ -169,8 +164,7 @@ filterBam dir' = mapOfFiles fn
 
             return [ Single $ info .~ [] $
                               format .~ BamFile $
-                              location .~ T.unpack (T.format fp output) $
-                              keywords .~ ["filtered bam file"] $ fl
+                              location .~ T.unpack (T.format fp output) $ fl
                    ]
         else return []
     fn _ _ _ = return []
@@ -178,7 +172,7 @@ filterBam dir' = mapOfFiles fn
 
 -- | Remove duplicates
 removeDuplicates :: (NGS e, IsDNASeq e, Experiment e)
-                 => FilePath -> FilePath -> [e] -> IO [e]
+                 => FilePath -> FilePath -> e -> IO e
 removeDuplicates picardPath dir' = mapOfFiles fn
   where
     fn e r (Single fl) = if fl^.format == BamFile
@@ -203,15 +197,15 @@ removeDuplicates picardPath dir' = mapOfFiles fn
 
                 let finalBam = format .~ BamFile $
                                info .~ [("stat", stats)] $
-                               keywords .~ ["processed bam file"] $
+                               tags .~ ["processed bam file"] $
                                location .~ T.unpack (T.format fp output) $ fl
                     finalBai = format .~ BaiFile $
                                info .~ [] $
-                               keywords .~ ["processed bam index file"] $
+                               tags .~ ["processed bam index file"] $
                                location .~ T.unpack (T.format (fp%".bai") output) $ fl
                     dupQC = format .~ Other $
                             info .~ [] $
-                            keywords .~ ["picard qc file"] $
+                            tags .~ ["picard qc file"] $
                             location .~ T.unpack (T.format fp qcFile) $ fl
 
                 return [Single finalBam, Single finalBai, Single dupQC]
@@ -220,7 +214,7 @@ removeDuplicates picardPath dir' = mapOfFiles fn
     dir = fromText $ T.pack dir'
 
 bam2Bed :: Experiment e
-        => FilePath -> [e] -> IO [e]
+        => FilePath -> e -> IO e
 bam2Bed dir' = mapOfFiles fn
   where
     fn e r (Single fl) = if fl^.format == BamFile
@@ -238,8 +232,8 @@ bam2Bed dir' = mapOfFiles fn
     dir = fromText $ T.pack dir'
 
 -- | Merge multiple gzipped BED files.
-mergeReplicatesBed :: Experiment e => FilePath -> [e] -> IO [e]
-mergeReplicatesBed dir' = mapM $ \e -> do
+mergeReplicatesBed :: Experiment e => FilePath -> e -> IO e
+mergeReplicatesBed dir' e = do
     mktree dir
     let fls = map getPath $ e^..replicates.folded.files.folded.filtered isBed
         output = T.format (fp%"/"%s%"_rep0.bed.gz") dir (e^.eid)
@@ -309,8 +303,8 @@ starMkIndex star dir fstqs anno r = do
 starAlign :: FilePath                    -- ^ Output directory
           -> FilePath                    -- ^ STAR genome index
           -> STAROptSetter               -- ^ Options
-          -> [RNASeq]
-          -> IO [RNASeq]
+          -> RNASeq
+          -> IO RNASeq
 starAlign dir' index' setter = mapOfFiles fn
   where
     isFastq :: File -> Bool
@@ -373,11 +367,11 @@ starAlign dir' index' setter = mapOfFiles fn
             let genomeAlignFile = Single $ info .~ [("stat", stats1)] $
                     format .~ BamFile $
                     location .~ T.unpack (T.format fp outputGenome) $
-                    keywords .~ ["RNA genome align bam"] $ emptyFile
+                    tags .~ ["RNA genome align bam"] $ emptyFile
                 annoFile = Single $ info .~ [("stat", stats2)] $
                     format .~ BamFile $
                     location .~ T.unpack (T.format fp outputAnno) $
-                    keywords .~ ["RNA anno align bam"] $ emptyFile
+                    tags .~ ["RNA anno align bam"] $ emptyFile
             return [genomeAlignFile, annoFile]
       where
         fls = case flset of
@@ -426,15 +420,13 @@ defaultRSEMOpts = RSEMOpts
 rsemQuant :: FilePath
           -> FilePath
           -> RSEMOptSetter
-          -> [RNASeq]
-          -> IO [RNASeq]
+          -> RNASeq
+          -> IO RNASeq
 rsemQuant dir' indexPrefix setter = mapOfFiles fn
   where
     opt = execState setter defaultRSEMOpts
     dir = fromText $ T.pack dir'
-    isAnnoBam :: File -> Bool
-    isAnnoBam f = f^.format == BamFile && "RNA anno align bam" `elem` f^.keywords
-    isAnnoBam _ = False
+    isAnnoBam f = f^.format == BamFile && "RNA anno align bam" `elem` f^.tags
     fn e r (Single fl) = if not (isAnnoBam fl) then return [] else do
         mktree dir
         let input = fromText $ T.pack $ fl^.location
@@ -449,9 +441,9 @@ rsemQuant dir' indexPrefix setter = mapOfFiles fn
 
         let geneQuant = Single $ format .~ Other $
                 location .~ T.unpack output ++ ".genes.results" $
-                keywords .~ ["gene quantification"] $ fl
+                tags .~ ["gene quantification"] $ fl
             transcirptQuant = Single $ format .~ Other $
                 location .~ T.unpack output ++ ".isoforms.results" $
-                keywords .~ ["transcript quantification"] $ fl
+                tags .~ ["transcript quantification"] $ fl
         return [geneQuant, transcirptQuant]
     fn _ _ _ = return []
