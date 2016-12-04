@@ -20,7 +20,6 @@ library
     Bio.Pipeline.CallPeaks
     Bio.Pipeline.NGS
     Bio.Pipeline.Utils
-    Bio.Pipeline.ScanMotifs
     Bio.Pipeline.Instances
 
   build-depends:
