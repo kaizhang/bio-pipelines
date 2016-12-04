@@ -1,6 +1,7 @@
 packages:
     - '.'
     - ../bio-experiments
+    - ../matrices
     - ../bioinformatics-toolkit
 
 extra-deps:
