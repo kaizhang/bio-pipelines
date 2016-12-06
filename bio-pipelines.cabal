@@ -39,6 +39,8 @@ library
     , matrices >=0.4.4
     , turtle
     , text
+    , temporary
+    , shelly
     , vector
     , cereal-vector
     , vector-binary-instances

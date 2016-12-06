@@ -48,8 +48,11 @@ import           Data.Conduit.Zlib         (gzip)
 import           Data.Int                  (Int32)
 import qualified Data.Text                 as T
 import           System.IO                 (hPutStrLn, stderr)
-import           Turtle                    hiding (FilePath, format, stderr)
+import           Turtle                    hiding (FilePath, printf, format, stderr)
 import qualified Turtle                    as T
+import Text.Printf (printf)
+import Shelly (silently, shelly, escaping, mkdir_p, run_)
+import System.IO.Temp (withTempDirectory)
 
 import Bio.Pipeline.Utils (mapOfFiles)
 
@@ -141,34 +144,73 @@ bwaAlign dir' index' setter = mapOfFiles fn
                               location .~ T.unpack (T.format fp output) $ fl
                    ]
         else return []
+    fn e r (Pair f1 f2) =
+        if (f1^.format == FastqFile || f1^.format == FastqGZip) &&
+           (f2^.format == FastqFile || f2^.format == FastqGZip)
+           then do
+                mktree dir
+                let output = fromText $ T.format (fp%"/"%s%"_rep"%d%".bam")
+                        dir (e^.eid) (r^.number)
+                    input1 = fromText $ T.pack $ f1^.location
+                    input2 = fromText $ T.pack $ f2^.location
+
+                stats <- with ( mktempdir (fromText $ T.pack $ opt^.bwaTmpDir) "bwa_align_tmp_dir" ) $ \tmpdir -> do
+                    let tmp_sort_bam = T.format (fp%"/sort_bam_tmp") tmpdir
+                    -- Align reads and save the results to tmp_sai.
+                    shells ( T.format (
+                        "bwa mem -M -k "%d%" -t "%d%" "%fp%" "%fp%" "%fp%
+                        " | samtools view -Su -"%
+                        " | samtools sort - -@ "%d%" -o "%fp%" -T "%s )
+                        (opt^.bwaSeedLen) (opt^.bwaCores) index input1 input2
+                        (opt^.bwaCores) output tmp_sort_bam ) empty
+
+                return [ Single $ format .~ BamFile $
+                                  location .~ T.unpack (T.format fp output) $ f1
+                       ]
+            else return []
     fn _ _ _ = return []
     opt = execState setter defaultBWAOpts
     index = fromText $ T.pack index'
     dir = fromText $ T.pack dir'
 
--- | Remove low quality and redundant tags.
+-- | Remove low quality and redundant tags, fill in mate information.
 filterBam :: (NGS e, IsDNASeq e, Experiment e)
           => FilePath  -- ^ directory to save the results
           -> e -> IO e
-filterBam dir' = mapOfFiles fn
+filterBam dir = mapOfFiles fn
   where
     fn e r (Single fl) = if fl^.format == BamFile
         then do
-            mktree dir
-            let output = fromText $ T.format (fp%"/"%s%"_rep"%d%"_filt.bam")
-                    dir (e^.eid) (r^.number)
-                input = fromText $ T.pack $ fl^.location
-
-            shells ( T.format ("samtools view -F 0x70c -q 30 -b "%fp%" > "%fp)
-                input output ) empty
-
+            shelly $ mkdir_p $ fromText $ T.pack dir
+            let output = T.pack $ printf "%s/%s_rep%d_filt.bam" dir
+                    (T.unpack $ e^.eid) (r^.number)
+                input = T.pack $ fl^.location
+            bamFilter (pairedEnd e) input output
             return [ Single $ info .~ [] $
                               format .~ BamFile $
-                              location .~ T.unpack (T.format fp output) $ fl
+                              location .~ T.unpack output $ fl
                    ]
         else return []
     fn _ _ _ = return []
-    dir = fromText $ T.pack dir'
+    bamFilter isPair input output = withTempDirectory dir "tmp_filt_dir." $ \tmp ->
+        shelly $ escaping False $ silently $ do
+            let tmp_filt = T.pack $ tmp ++ "/tmp_filt.bam"
+                tmp_fixmate = T.pack $ tmp ++ "/tmp_fixmate.bam"
+            run_ "samtools" $ ["view"] ++ outputMode ++
+                ["-F", "0x70c", "-q", "30"] ++ compression ++ [input] ++
+                tmpOutput tmp_filt
+            when isPair $ do
+                run_ "samtools" ["fixmate", "-r", tmp_filt, tmp_fixmate]
+                run_ "samtools" [ "view", "-F", "1804", "-f", "2", "-u"
+                    , tmp_fixmate, "|", "samtools", "sort", "-", "-T", T.pack dir
+                    , "-o", output ]
+
+      where
+        outputMode = if isPair then ["-f", "2"] else []
+        compression = if isPair then ["-u"] else ["-b"]
+        tmpOutput x = if isPair
+            then ["|", "samtools", "sort", "-", "-n", "-T", T.pack dir, "-o", x]
+            else [">", output]
 
 -- | Remove duplicates
 removeDuplicates :: (NGS e, IsDNASeq e, Experiment e)
@@ -192,23 +234,18 @@ removeDuplicates picardPath dir' = mapOfFiles fn
 
                 -- Remove duplicates. Index final position sorted BAM
                 shells (T.format ("samtools view -F 0x70c -b "%fp%" > "%fp) tmp output) empty
-                shells (T.format ("samtools index "%fp) output) empty
                 (_, stats) <- shellStrict (T.format ("samtools flagstat "%fp) output) empty
 
                 let finalBam = format .~ BamFile $
                                info .~ [("stat", stats)] $
                                tags .~ ["processed bam file"] $
                                location .~ T.unpack (T.format fp output) $ fl
-                    finalBai = format .~ BaiFile $
-                               info .~ [] $
-                               tags .~ ["processed bam index file"] $
-                               location .~ T.unpack (T.format (fp%".bai") output) $ fl
                     dupQC = format .~ Other $
                             info .~ [] $
                             tags .~ ["picard qc file"] $
                             location .~ T.unpack (T.format fp qcFile) $ fl
 
-                return [Single finalBam, Single finalBai, Single dupQC]
+                return [Single finalBam, Single dupQC]
         else return []
     fn _ _ _ = return []
     dir = fromText $ T.pack dir'
