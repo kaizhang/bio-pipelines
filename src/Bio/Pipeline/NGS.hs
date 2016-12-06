@@ -179,38 +179,36 @@ filterBam :: (NGS e, IsDNASeq e, Experiment e)
           -> e -> IO e
 filterBam dir = mapOfFiles fn
   where
-    fn e r (Single fl) = if fl^.format == BamFile
-        then do
+    fn e r (Single fl)
+        | fl^.format == BamFile = do
             shelly $ mkdir_p $ fromText $ T.pack dir
             let output = T.pack $ printf "%s/%s_rep%d_filt.bam" dir
                     (T.unpack $ e^.eid) (r^.number)
                 input = T.pack $ fl^.location
             bamFilter (pairedEnd e) input output
-            return [ Single $ info .~ [] $
-                              format .~ BamFile $
-                              location .~ T.unpack output $ fl
-                   ]
-        else return []
+            return [ Single $ info .~ [] $ format .~ BamFile $
+                location .~ T.unpack output $ fl ]
+        | otherwise = return []
     fn _ _ _ = return []
     bamFilter isPair input output = withTempDirectory dir "tmp_filt_dir." $ \tmp ->
         shelly $ escaping False $ silently $ do
             let tmp_filt = T.pack $ tmp ++ "/tmp_filt.bam"
                 tmp_fixmate = T.pack $ tmp ++ "/tmp_fixmate.bam"
+                tmpOutput | isPair = [ "|", "samtools", "sort", "-", "-n"
+                    , "-T", T.pack tmp, "-o", tmp_filt ]
+                          | otherwise = [">", output]
             run_ "samtools" $ ["view"] ++ outputMode ++
                 ["-F", "0x70c", "-q", "30"] ++ compression ++ [input] ++
-                tmpOutput tmp_filt
+                tmpOutput
             when isPair $ do
                 run_ "samtools" ["fixmate", "-r", tmp_filt, tmp_fixmate]
                 run_ "samtools" [ "view", "-F", "1804", "-f", "2", "-u"
-                    , tmp_fixmate, "|", "samtools", "sort", "-", "-T", T.pack dir
+                    , tmp_fixmate, "|", "samtools", "sort", "-", "-T", T.pack tmp
                     , "-o", output ]
 
       where
         outputMode = if isPair then ["-f", "2"] else []
         compression = if isPair then ["-u"] else ["-b"]
-        tmpOutput x = if isPair
-            then ["|", "samtools", "sort", "-", "-n", "-T", T.pack dir, "-o", x]
-            else [">", output]
 
 -- | Remove duplicates
 removeDuplicates :: (NGS e, IsDNASeq e, Experiment e)
