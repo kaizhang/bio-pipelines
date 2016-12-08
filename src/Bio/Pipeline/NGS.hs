@@ -1,8 +1,8 @@
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE GADTs             #-}
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell   #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 
 module Bio.Pipeline.NGS
     ( BWAOpts
@@ -17,6 +17,7 @@ module Bio.Pipeline.NGS
     , filterBam
     , removeDuplicates
     , bam2Bed
+    , sortedBam2BedPE
     , mergeReplicatesBed
 
     , STAROpts
@@ -37,8 +38,9 @@ module Bio.Pipeline.NGS
     , rsemQuant
     ) where
 
-import           Bio.Data.Bam              (bamToBed, readBam, runBam)
-import           Bio.Data.Bed              (toLine)
+import           Bio.Data.Bam              (bamToBed, readBam, runBam,
+                                            sortedBamToBedPE)
+import           Bio.Data.Bed              (BED3 (..), BEDLike (..), toLine)
 import           Bio.Data.Experiment.Types
 import           Conduit
 import           Control.Lens
@@ -46,15 +48,19 @@ import           Control.Monad             (forM)
 import           Control.Monad.State.Lazy
 import           Data.Conduit.Zlib         (gzip)
 import           Data.Int                  (Int32)
+import           Data.Maybe                (fromJust)
 import qualified Data.Text                 as T
+import           Shelly                    (escaping, mkdir_p, run_, shelly,
+                                            silently)
+import           System.FilePath
 import           System.IO                 (hPutStrLn, stderr)
-import           Turtle                    hiding (FilePath, printf, format, stderr)
+import           System.IO.Temp            (withTempDirectory)
+import           Text.Printf               (printf)
+import           Turtle                    hiding (FilePath, format, printf,
+                                            stderr)
 import qualified Turtle                    as T
-import Text.Printf (printf)
-import Shelly (silently, shelly, escaping, mkdir_p, run_)
-import System.IO.Temp (withTempDirectory)
 
-import Bio.Pipeline.Utils (mapOfFiles)
+import           Bio.Pipeline.Utils        (mapOfFiles)
 
 
 --------------------------------------------------------------------------------
@@ -213,58 +219,88 @@ filterBam dir = mapOfFiles fn
 -- | Remove duplicates
 removeDuplicates :: (NGS e, IsDNASeq e, Experiment e)
                  => FilePath -> FilePath -> e -> IO e
-removeDuplicates picardPath dir' = mapOfFiles fn
+removeDuplicates picardPath dir = mapOfFiles fn
   where
     fn e r (Single fl) = if fl^.format == BamFile
         then do
-            mktree dir
-            let output = fromText $ T.format (fp%"/"%s%"_rep"%d%"_filt_mono.bam")
-                    dir (e^.eid) (r^.number)
-                input = fromText $ T.pack $ fl^.location
-                qcFile = fromText $ T.format (fp%"/"%s%"_picard.qc") dir (e^.eid)
+            shelly $ mkdir_p $ fromText $ T.pack dir
+            let output = printf "%s/%s_rep%d_filt_mono.bam" dir
+                    (T.unpack $ e^.eid) (r^.number)
+                input = fl^.location
+                qcFile = printf ("%s/%s_picard.qc") dir (T.unpack $ e^.eid)
 
-            with (mktempfile "./" "picard_tmp_file.bam") $ \tmp -> do
+            withTempDirectory "./" "tmp_picard_dir." $ \tmp -> shelly $ do
                 -- Mark duplicates
-                shells ( T.format ("java -Xmx4G -jar "%s%" MarkDuplicates INPUT="%fp%
-                    " OUTPUT="%fp%" METRICS_FILE="%fp%
-                    " VALIDATION_STRINGENCY=LENIENT ASSUME_SORTED=true REMOVE_DUPLICATES=false")
-                    (T.pack picardPath) input tmp qcFile) empty
+                run_ "java" ["-Xmx4G", "-jar", T.pack picardPath
+                    , "MarkDuplicates", T.pack $ "INPUT=" ++ input
+                    , T.pack $ "OUTPUT=" ++ tmp++"/tmp.bam"
+                    , T.pack $ "METRICS_FILE=" ++ qcFile
+                    , "VALIDATION_STRINGENCY=LENIENT"
+                    , "ASSUME_SORT_ORDER=coordinate", "REMOVE_DUPLICATES=false"]
 
                 -- Remove duplicates. Index final position sorted BAM
-                shells (T.format ("samtools view -F 0x70c -b "%fp%" > "%fp) tmp output) empty
-                (_, stats) <- shellStrict (T.format ("samtools flagstat "%fp) output) empty
+                escaping False $ run_ "samtools" [ "view", "-F", "0x70c", "-b"
+                    , T.pack $ tmp ++ "/tmp.bam", ">", T.pack output ]
+
+                -- Re-sort by names for pairedend sequencing
+                when (pairedEnd e) $ do
+                    run_ "samtools" ["sort", T.pack $ tmp ++ "/tmp.bam", "-n"
+                        , "-T", T.pack tmp, "-o", T.pack $ tmp ++ "/tmp.sort.bam"]
+                    mv (fromText $ T.pack $ tmp ++ "/tmp.sort.bam") $
+                        fromText $ T.pack output
 
                 let finalBam = format .~ BamFile $
-                               info .~ [("stat", stats)] $
                                tags .~ ["processed bam file"] $
-                               location .~ T.unpack (T.format fp output) $ fl
+                               location .~ output $ fl
                     dupQC = format .~ Other $
                             info .~ [] $
                             tags .~ ["picard qc file"] $
-                            location .~ T.unpack (T.format fp qcFile) $ fl
+                            location .~ qcFile $ fl
 
                 return [Single finalBam, Single dupQC]
         else return []
     fn _ _ _ = return []
-    dir = fromText $ T.pack dir'
 
-bam2Bed :: Experiment e
-        => FilePath -> e -> IO e
-bam2Bed dir' = mapOfFiles fn
+bam2Bed :: String -> FileSet -> IO (Maybe FileSet)
+bam2Bed prefix (Single fl)
+    | fl^.format == BamFile = do
+        shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory prefix
+        let output = prefix ++ replaceExtension (fl^.location) ".bed.gz"
+            bedFile = format .~ BedGZip $
+                      location .~ output $ fl
+        runBam $ readBam (fl^.location) =$= bamToBed =$= mapC toLine =$=
+            unlinesAsciiC =$= gzip $$ sinkFileBS output
+        return $ Just $ Single bedFile
+    | otherwise = return Nothing
+bam2Bed _ _ = return Nothing
+{-# INLINE bam2Bed #-}
+
+-- | Convert name sorted BAM to BEDPE suitable for MACS2.
+sortedBam2BedPE :: String -> FileSet -> IO (Maybe FileSet)
+sortedBam2BedPE prefix (Single fl)
+    | fl^.format == BamFile = do
+        shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory prefix
+        let output = prefix ++ replaceExtension (fl^.location) ".bed.gz"
+            bedFile = format .~ BedGZip $
+                      location .~ output $ fl
+        runBam $ readBam (fl^.location) =$= sortedBamToBedPE =$=
+            concatMapC f =$= mapC toLine =$= unlinesAsciiC =$= gzip $$
+            sinkFileBS output
+        return $ Just $ Single bedFile
+    | otherwise = return Nothing
   where
-    fn e r (Single fl) = if fl^.format == BamFile
-        then do
-            mktree dir
-            let output = T.unpack $ T.format (fp%"/"%s%"bed.gz") dir $ fst $
-                    T.breakOnEnd "." $ snd $ T.breakOnEnd "/" $ T.pack $ fl^.location
-                bedFile = format .~ BedGZip $
-                          location .~ output $ fl
-            runBam $ readBam (fl^.location) =$= bamToBed =$= mapC toLine =$=
-                unlinesAsciiC =$= gzip $$ sinkFileBS output
-            return [Single bedFile]
-        else return []
-    fn _ _ _ = return []
-    dir = fromText $ T.pack dir'
+    f (b1, b2)
+        | chrom b1 /= chrom b2 || bedStrand b1 == bedStrand b2 = Nothing
+        | otherwise =
+            let left = if fromJust (bedStrand b1)
+                    then chromStart b1 else chromStart b2
+                right = if not (fromJust $ bedStrand b2)
+                    then chromEnd b2 else chromEnd b1
+            in if left <= right
+                  then Just $ BED3 (chrom b1) left right
+                  else error "Left coordinate is smaller than right coordinate."
+sortedBam2BedPE _ _ = return Nothing
+{-# INLINE sortedBam2BedPE #-}
 
 -- | Merge multiple gzipped BED files.
 mergeReplicatesBed :: Experiment e => FilePath -> e -> IO e
@@ -293,7 +329,7 @@ data STAROpts = STAROpts
     { _starCmd    :: T.Text
     , _starCores  :: Int
     , _starTmpDir :: FilePath
-    , _starSort :: Bool
+    , _starSort   :: Bool
     }
 
 makeLenses ''STAROpts

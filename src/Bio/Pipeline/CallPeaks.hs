@@ -49,52 +49,45 @@ defaultCallPeakOpts = CallPeakOpts
     }
 
 -- | Call peaks using MACS2.
-callPeaks :: FilePath             -- ^ Ouptut file
-          -> [FileSet]            -- ^ one or more samples. Samples will be concatenated.
-          -> [FileSet]            -- ^ zero or more input samples
-          -> CallPeakOptSetter    -- ^ Options
+callPeaks :: FilePath           -- ^ Ouptut file
+          -> FileSet            -- ^ Sample
+          -> Maybe FileSet      -- ^ Input/control sample
+          -> CallPeakOptSetter  -- ^ Options
           -> IO FileSet
-callPeaks output targets' inputs' setter = do
-    macs2 output (map (^.location) targets) (map (^.location) inputs)
+callPeaks output target input setter = do
+    macs2 output (target^._Single.location) (fmap (^._Single.location) input)
         fileFormat opt
     return $ Single $ format .~ NarrowPeakFile $ location .~ output $
         tags .~ ["macs2"] $ emptyFile
   where
-    targets = targets'^..folded._Single
-    inputs = inputs'^..folded._Single
     opt = execState setter defaultCallPeakOpts
     fileFormat
-        | opt^.pair = if allFilesEqual
-            then case formt of
-                BamFile -> "BAMPE"
-                _ -> error "Only BAM input is supported in pairedend mode."
-            else error "Only BAM input is supported in pairedend mode."
+        | opt^.pair = case target of
+            Single fl -> case fl^.format of
+                BedFile -> "BEDPE"
+                BedGZip -> "BEDPE"
+                _ -> error "Only BED input is supported in pairedend mode."
+            _ -> error "Paired files detected."
         | otherwise = "AUTO"
-      where
-        formt = head targets ^. format
-        allFilesEqual = allEqual targets && allEqual inputs
-          where
-            allEqual = all (\x -> x^.format == formt)
 {-# INLINE callPeaks #-}
 
-macs2 :: FilePath      -- ^ Output
-      -> [FilePath]    -- ^ Target
-      -> [FilePath]    -- ^ Input
-      -> String        -- ^ File format
+macs2 :: FilePath        -- ^ Output
+      -> FilePath        -- ^ Target
+      -> Maybe FilePath  -- ^ Input
+      -> String          -- ^ File format
       -> CallPeakOpts
       -> IO ()
-macs2 output targets inputs fileformat opt = withTempDirectory (opt^.tmpDir)
-    "tmp_macs2_dir." $ \tmp -> shelly $ silently $ do
+macs2 output target input fileformat opt = withTempDirectory (opt^.tmpDir)
+    "tmp_macs2_dir." $ \tmp -> shelly $ do
         run_ "macs2" $
             [ "callpeak", "-f", T.pack fileformat, "-g", T.pack $ opt^.gSize
             , "--outdir", T.pack tmp, "--tempdir", T.pack tmp, "--keep-dup"
-            , "all", "-q", T.pack $ show $ opt^.qValue
-            ] ++ samples ++ controls
+            , "all", "-q", T.pack $ show $ opt^.qValue, "-t", T.pack target
+            ] ++ control
         mv (fromText $ T.pack $ tmp ++ "/NA_peaks.narrowPeak") $ fromText $
             T.pack output
   where
-    controls | null inputs = []
-             | otherwise = "-c" : map T.pack inputs
-    samples | null targets = error "Empty sample."
-            | otherwise = "-t" : map T.pack targets
+    control = case input of
+        Nothing -> []
+        Just x -> ["-c", T.pack x]
 {-# INLINE macs2 #-}

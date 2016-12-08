@@ -33,6 +33,7 @@ library
     , conduit-extra
     , cereal
     , data-default
+    , filepath
     , hashable
     , lens
     , mtl
