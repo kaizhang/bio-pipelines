@@ -230,24 +230,25 @@ removeDuplicates picardPath dir = mapOfFiles fn
                 qcFile = printf ("%s/%s_picard.qc") dir (T.unpack $ e^.eid)
 
             withTempDirectory "./" "tmp_picard_dir." $ \tmp -> shelly $ do
+                let markdupTmp = tmp++"/dup_marked.bam"
+                    filtTmp = tmp++"/dup_filt.bam"
                 -- Mark duplicates
                 run_ "java" ["-Xmx4G", "-jar", T.pack picardPath
                     , "MarkDuplicates", T.pack $ "INPUT=" ++ input
-                    , T.pack $ "OUTPUT=" ++ tmp++"/tmp.bam"
+                    , T.pack $ "OUTPUT=" ++ markdupTmp
                     , T.pack $ "METRICS_FILE=" ++ qcFile
                     , "VALIDATION_STRINGENCY=LENIENT"
                     , "ASSUME_SORT_ORDER=coordinate", "REMOVE_DUPLICATES=false"]
 
-                -- Remove duplicates. Index final position sorted BAM
+                -- Remove duplicates.
                 escaping False $ run_ "samtools" [ "view", "-F", "0x70c", "-b"
-                    , T.pack $ tmp ++ "/tmp.bam", ">", T.pack output ]
+                    , T.pack markdupTmp, ">", T.pack filtTmp ]
 
                 -- Re-sort by names for pairedend sequencing
-                when (pairedEnd e) $ do
-                    run_ "samtools" ["sort", T.pack $ tmp ++ "/tmp.bam", "-n"
-                        , "-T", T.pack tmp, "-o", T.pack $ tmp ++ "/tmp.sort.bam"]
-                    mv (fromText $ T.pack $ tmp ++ "/tmp.sort.bam") $
-                        fromText $ T.pack output
+                if pairedEnd e
+                    then run_ "samtools" [ "sort", T.pack filtTmp, "-n"
+                        , "-T", T.pack tmp, "-o", T.pack output ]
+                    else mv (fromText $ T.pack filtTmp) $ fromText $ T.pack output
 
                 let finalBam = format .~ BamFile $
                                tags .~ ["processed bam file"] $
