@@ -266,7 +266,7 @@ bam2Bed :: String -> FileSet -> IO (Maybe FileSet)
 bam2Bed prefix (Single fl)
     | fl^.format == BamFile = do
         shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory prefix
-        let output = prefix ++ replaceExtension (fl^.location) ".bed.gz"
+        let output = prefix ++ takeBaseName (fl^.location) ++ ".bed.gz"
             bedFile = format .~ BedGZip $
                       location .~ output $ fl
         runBam $ readBam (fl^.location) =$= bamToBed =$= mapC toLine =$=
@@ -281,7 +281,7 @@ sortedBam2BedPE :: String -> FileSet -> IO (Maybe FileSet)
 sortedBam2BedPE prefix (Single fl)
     | fl^.format == BamFile = do
         shelly $ mkdir_p $ fromText $ T.pack $ takeDirectory prefix
-        let output = prefix ++ replaceExtension (fl^.location) ".bed.gz"
+        let output = prefix ++ takeBaseName (fl^.location) ++ ".bed.gz"
             bedFile = format .~ BedGZip $
                       location .~ output $ fl
         runBam $ readBam (fl^.location) =$= sortedBamToBedPE =$=
