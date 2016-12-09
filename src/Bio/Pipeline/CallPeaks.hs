@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances      #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
+{-# LANGUAGE OverloadedLists        #-}
 {-# LANGUAGE OverloadedStrings      #-}
 {-# LANGUAGE TemplateHaskell        #-}
 
@@ -14,16 +15,24 @@ module Bio.Pipeline.CallPeaks
     , pair
     , defaultCallPeakOpts
     , callPeaks
+    , idr
+    , idrMultiple
     ) where
 
+import           Bio.Data.Bed
 import           Bio.Data.Experiment.Types
+import           Conduit
 import           Control.Lens
 import           Control.Monad.State.Lazy
+import qualified Data.ByteString.Char8     as B
+import           Data.Conduit.Zlib         (ungzip)
+import           Data.Ord
 import qualified Data.Text                 as T
-import           Shelly                    hiding (FilePath)
+import           Shelly                    (fromText, mv, run_, shelly)
 import           System.IO.Temp            (withTempDirectory)
 
 import           Bio.Pipeline.Utils
+import           Data.List
 
 type CallPeakOptSetter = State CallPeakOpts ()
 
@@ -57,8 +66,9 @@ callPeaks :: FilePath           -- ^ Ouptut file
 callPeaks output target input setter = do
     macs2 output (target^._Single.location) (fmap (^._Single.location) input)
         fileFormat opt
+    f <- frip (target^._Single.location) output
     return $ Single $ format .~ NarrowPeakFile $ location .~ output $
-        tags .~ ["macs2"] $ emptyFile
+        tags .~ ["macs2"] $ info .~ [("FRiP", T.pack $ show f)] $ emptyFile
   where
     opt = execState setter defaultCallPeakOpts
     fileFormat
@@ -91,3 +101,64 @@ macs2 output target input fileformat opt = withTempDirectory (opt^.tmpDir)
         Nothing -> []
         Just x -> ["-c", T.pack x]
 {-# INLINE macs2 #-}
+
+-- | Fraction of reads in peaks
+frip :: FilePath   -- ^ reads, in BedGzip format
+     -> FilePath   -- ^ peaks, in bed format
+     -> IO Double
+frip tags peaks = do
+    p <- readBed' peaks :: IO [BED3]
+    (n, m) <- flip execStateT (0::Int, 0::Int) $ runResourceT $
+        sourceFileBS tags =$= ungzip =$= linesUnboundedAsciiC =$=
+        mapC (fromLine :: B.ByteString -> BED3) =$= total =$= intersectBed p $$ count
+    return $ fromIntegral m / fromIntegral n
+  where
+    total = awaitForever $ \i -> do
+        (c, x) <- get
+        put (c+1,x)
+        yield i
+    count = awaitForever $ \i -> do
+        (x, c) <- get
+        put (x, c+1)
+
+idrMultiple :: [FileSet]   -- ^ Peaks
+            -> FileSet     -- ^ Merged peaks
+            -> Double
+            -> FilePath
+            -> IO FileSet
+idrMultiple [x] _ _ _ = return x
+idrMultiple peakFiles merged th output =
+    withTempDirectory "./" "tmp_idr_dir." $ \tmp -> do
+        peaks <- forM (zip [1..] peakPair) $ \(i, (p1, p2)) -> do
+            result <- idr p1 p2 merged th $ tmp ++ "/" ++ show i
+            n <- numLine $ result^._Single.location
+            return (result^._Single.location, n)
+        let final = fst $ maximumBy (comparing snd) peaks
+        shelly $ mv (fromText $ T.pack final) $ fromText $ T.pack output
+        return $ Single $ format .~ NarrowPeakFile $ location .~ output $
+            tags .~ ["IDR"] $ emptyFile
+  where
+    numLine x = do
+        c <- B.readFile x
+        return $ length $ B.lines c
+    peakPair = comb peakFiles
+    comb (x:xs) = zip (repeat x) xs ++ comb xs
+    comb _ = []
+
+-- | Perform Irreproducible Discovery Rate (IDR) analysis
+idr :: FileSet   -- ^ Peak 1
+    -> FileSet   -- ^ Peak 2
+    -> FileSet   -- ^ Peaks called from merged replicates (relax threshold)
+    -> Double    -- ^ IDR threshold
+    -> FilePath  -- ^ Output
+    -> IO FileSet
+idr peak1 peak2 peakMerged th output = do
+    shelly $ run_ "idr" [ "--samples", p1, p2, "--peak-list", pm
+        , "--input-file-type", "narrowPeak", "--rank", "signal.value"
+        , "--idr-threshold", T.pack $ show th, "-o", T.pack output ]
+    return $ Single $ format .~ NarrowPeakFile $ location .~ output $
+        tags .~ ["IDR"] $ emptyFile
+  where
+    p1 = T.pack $ peak1^._Single.location
+    p2 = T.pack $ peak2^._Single.location
+    pm = T.pack $ peakMerged^._Single.location

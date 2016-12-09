@@ -14,9 +14,9 @@ getPrefix x = if suffix == "gz"
   where
     (prefix, suffix) = T.breakOnEnd "." x
 
-mapOfFiles :: Experiment e
-           => (e -> Replicate -> FileSet -> IO [FileSet])
-           -> e -> IO e
+mapOfFiles :: (Experiment e, Monad m)
+           => (e -> Replicate -> FileSet -> m [FileSet])
+           -> e -> m e
 mapOfFiles fn e = flip (id (replicates.traverse)) e $ \r ->
     id files (fmap concat . mapM (fn e r)) r
 {-# INLINE mapOfFiles #-}

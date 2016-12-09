@@ -174,7 +174,6 @@ bwaAlign dir' index' setter = mapOfFiles fn
                                   location .~ T.unpack (T.format fp output) $ f1
                        ]
             else return []
-    fn _ _ _ = return []
     opt = execState setter defaultBWAOpts
     index = fromText $ T.pack index'
     dir = fromText $ T.pack dir'
