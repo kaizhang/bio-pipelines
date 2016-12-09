@@ -46,6 +46,7 @@ import           Conduit
 import           Control.Lens
 import           Control.Monad             (forM)
 import           Control.Monad.State.Lazy
+import           Data.Conduit.Zlib         (gzip, ungzip)
 import           Data.Conduit.Zlib         (gzip)
 import           Data.Int                  (Int32)
 import           Data.Maybe                (fromJust)
@@ -302,23 +303,20 @@ sortedBam2BedPE prefix (Single fl)
 sortedBam2BedPE _ _ = return Nothing
 {-# INLINE sortedBam2BedPE #-}
 
--- | Merge multiple gzipped BED files.
+-- | Merge multiple BED files.
 mergeReplicatesBed :: Experiment e => FilePath -> e -> IO e
-mergeReplicatesBed dir' e = do
-    mktree dir
-    let fls = map getPath $ e^..replicates.folded.files.folded.filtered isBed
-        output = T.format (fp%"/"%s%"_rep0.bed.gz") dir (e^.eid)
-        bedFile = Single $ format .~ BedGZip $ location .~ T.unpack output $
-            emptyFile
-        r = files .~ [bedFile] $ emptyReplicate
-    shells (T.format ("zcat "%s%" | gzip -c > "%s)
-        (T.unwords $ map T.pack fls) output) empty
-    return $ replicates .~ [r] $ e
-  where
-    dir = fromText $ T.pack dir'
-    isBed (Single x) = x^.format == BedGZip
-    isBed _ = False
-    getPath (Single x) = x^.location
+mergeReplicatesBed dir e = do
+    shelly $ mkdir_p $ fromText $ T.pack dir
+    let fls = e^..replicates.folded.files.folded._Single
+        output = printf "%s/%s_rep0.bed.gz" dir (T.unpack $ e^.eid)
+        bedFile = Single $ format .~ BedGZip $ location .~ output $ emptyFile
+        source = forM_ fls $ \fl -> case fl^.format of
+            BedGZip -> sourceFileBS (fl^.location) =$= ungzip
+            BedFile -> sourceFileBS (fl^.location)
+            _ -> return ()
+    runResourceT $ source =$= gzip $$ sinkFile output
+    return $ replicates .~ [files .~ [bedFile] $ emptyReplicate] $ e
+{-# INLINE mergeReplicatesBed #-}
 
 
 --------------------------------------------------------------------------------
