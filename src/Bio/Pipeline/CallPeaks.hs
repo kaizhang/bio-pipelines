@@ -9,8 +9,9 @@
 module Bio.Pipeline.CallPeaks
     ( CallPeakOpts(..)
     , CallPeakOptSetter
+    , Cutoff(..)
     , tmpDir
-    , qValue
+    , cutoff
     , gSize
     , pair
     , defaultCallPeakOpts
@@ -38,19 +39,22 @@ type CallPeakOptSetter = State CallPeakOpts ()
 
 data CallPeakOpts = CallPeakOpts
     { callPeakOptsTmpDir :: FilePath
-    , callPeakOptsQValue :: Double
+    , callPeakOptsCutoff :: Cutoff
     , callPeakOptsGSize  :: String
     , callPeakOptsPair   :: Bool
     --, callPeakOptsBroad :: Bool
     --, callPeakOptsBroadCutoff :: Double
     }
 
+data Cutoff = PValue Double
+            | QValue Double
+
 makeFields ''CallPeakOpts
 
 defaultCallPeakOpts :: CallPeakOpts
 defaultCallPeakOpts = CallPeakOpts
     { callPeakOptsTmpDir = "./"
-    , callPeakOptsQValue = 0.01
+    , callPeakOptsCutoff = QValue 0.01
     , callPeakOptsGSize = "mm"
     , callPeakOptsPair  = False
     --, callPeakOptsBroad = False
@@ -92,14 +96,17 @@ macs2 output target input fileformat opt = withTempDirectory (opt^.tmpDir)
         run_ "macs2" $
             [ "callpeak", "-f", T.pack fileformat, "-g", T.pack $ opt^.gSize
             , "--outdir", T.pack tmp, "--tempdir", T.pack tmp, "--keep-dup"
-            , "all", "-q", T.pack $ show $ opt^.qValue, "-t", T.pack target
-            ] ++ control
+            , "all", "-t", T.pack target
+            ] ++ control ++ cut
         mv (fromText $ T.pack $ tmp ++ "/NA_peaks.narrowPeak") $ fromText $
             T.pack output
   where
     control = case input of
         Nothing -> []
         Just x -> ["-c", T.pack x]
+    cut = case opt^.cutoff of
+        QValue x -> ["--qvalue", T.pack $ show x]
+        PValue x -> ["--pvalue", T.pack $ show x]
 {-# INLINE macs2 #-}
 
 -- | Fraction of reads in peaks
