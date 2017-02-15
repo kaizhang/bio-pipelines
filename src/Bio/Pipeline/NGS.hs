@@ -232,6 +232,7 @@ removeDuplicates picardPath dir = mapOfFiles fn
                 run_ "java" ["-Xmx4G", "-jar", T.pack picardPath
                     , "MarkDuplicates", T.pack $ "INPUT=" ++ input
                     , T.pack $ "OUTPUT=" ++ markdupTmp
+                    , T.pack $ "TMP_DIR=" ++ tmp
                     , T.pack $ "METRICS_FILE=" ++ qcFile
                     , "VALIDATION_STRINGENCY=LENIENT"
                     , "ASSUME_SORT_ORDER=coordinate", "REMOVE_DUPLICATES=false"]
