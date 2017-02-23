@@ -387,10 +387,9 @@ starAlign dir index setter = mapOfFiles fn
                 ["--genomeDir", T.pack index, "--readFilesIn"] ++ inputs ++
                 [ "--outFileNamePrefix", T.pack $ tmp_dir ++ "/"
                 , "--runThreadN",  T.pack $ show $ opt^.starCores ] ++
-                if (head fls)^.format == FastqGZip
+                ( if (head fls)^.format == FastqGZip
                     then ["--readFilesCommand", "zcat"]
-                    else []
-                ++
+                    else [] ) ++
                 [ "--genomeLoad", "NoSharedMemory"
                 , "--outFilterType", "BySJout"     -- reduces the number of ”spurious” junctions
                 , "--outFilterMultimapNmax", "20"  -- max number of multiple alignments allowed for a read: if exceeded, the read is considered unmapped
@@ -405,13 +404,13 @@ starAlign dir index setter = mapOfFiles fn
                 , "NH", "HI", "AS", "NM", "MD"
                 , "--outSAMheaderCommentFile", "COfile.txt"
                 , "--outSAMheaderHD", "@HD", "VN:1.4", "SO:coordinate" ] ++
-                if opt^.starSort
+                ( if opt^.starSort
                     then [ "--outSAMtype", "BAM", "SortedByCoordinate"
                          , "--limitBAMsortRAM", "60000000000" ]
-                    else ["--outSAMtype", "BAM", "Unsorted"]
-                ++
-                if pairedEnd e then [] else ["--outSAMstrandField", "intronMotif"]
-                ++
+                    else ["--outSAMtype", "BAM", "Unsorted"] ) ++
+                ( if pairedEnd e
+                    then []
+                    else ["--outSAMstrandField", "intronMotif"] ) ++
                 ["--quantMode", "TranscriptomeSAM", "--sjdbScore", "1"]
 
             let starOutput | opt^.starSort = "/Aligned.sortedByCoord.out.bam"
@@ -499,10 +498,10 @@ rsemQuant dir indexPrefix setter = mapOfFiles fn
             [ "--bam", "--estimate-rspd", "--calc-ci", "--seed"
             , T.pack $ show $ opt^.rsemSeed, "-p", T.pack $ show $ opt^.rsemCores
             , "--no-bam-output", "--ci-memory", "30000" ] ++
-            if pairedEnd e
+            ( if pairedEnd e
                 then ["--paired-end", "--forward-prob", "0"]
-                else []
-            ++ [T.pack input, T.pack indexPrefix, T.pack output]
+                else [] ) ++
+            [T.pack input, T.pack indexPrefix, T.pack output]
 
         let geneQuant = Single $ format .~ Other $
                 location .~ output ++ ".genes.results" $
